@@ -1,0 +1,30 @@
+{
+  "name": "ver-id-oath-api",
+  "version": "1.0.0",
+  "description": "Server running the Ver-ID API for OATH user authentication and DSKPP key provisioning.",
+  "main": "api.js",
+  "scripts": {
+    "test": "./node_modules/.bin/mocha --reporter spec"
+  },
+  "author": "Jakub Dolejs",
+  "license": "ISC",
+  "private": true,
+  "dependencies": {
+    "body-parser": "^1.15.2",
+    "chai": "^3.5.0",
+    "cookie-parser": "^1.4.3",
+    "crypto": "0.0.3",
+    "express": "^4.14.0",
+    "fs": "0.0.1-security",
+    "mocha": "^3.0.2",
+    "nano": "^6.2.0",
+    "nconf": "^0.8.4",
+    "node-forge": "^0.6.42",
+    "pubnub": "^4.0.6",
+    "pug": "^2.0.0-beta5",
+    "qr-image": "^3.1.0",
+    "request": "^2.74.0",
+    "url": "^0.11.0",
+    "xml2js": "^0.4.17"
+  }
+}

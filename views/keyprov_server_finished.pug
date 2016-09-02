@@ -1,0 +1,29 @@
+doctype xml
+dskpp:KeyProvServerFinished(
+	xmlns:pskc="urn:ietf:params:xml:ns:keyprov:pskc",
+	xmlns:dskpp="urn:ietf:params:xml:ns:keyprov:dskpp",
+	xmlns:xenc="http://www.w3.org/2001/04/xmlenc#",
+	xmlns:ds="http://www.w3.org/2000/09/xmldsig#",
+	Version="1.0",
+	SessionID=sessionId,
+	Status="Success"
+)
+	dskpp:KeyPackage
+		dskpp:KeyContainer(
+			Version="1.0",
+			Id="KC00001"
+		)
+			pskc:KeyPackage
+				pskc:Key(
+					Id=keyId,
+					Algorithm="urn:ietf:params:xml:ns:keyprov:pskc:hotp"
+				)
+					pskc:Issuer Ver-ID
+					pskc:AlgorithmParameters
+						pskc:ResponseFormat(
+							Length=6,
+							Encoding=DECIMAL
+						)
+					pskc:Policy
+						pskc:KeyUsage OTP
+	dskpp:Mac(MacAlgorithm="urn:ietf:params:xml:ns:keyprov:dskpp:prf-sha256") #{mac}

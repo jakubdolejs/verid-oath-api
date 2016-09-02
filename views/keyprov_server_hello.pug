@@ -1,0 +1,18 @@
+doctype xml
+dskpp:KeyProvServerHello(
+	xmlns:pskc="urn:ietf:params:xml:ns:keyprov:pskc",
+	xmlns:dskpp="urn:ietf:params:xml:ns:keyprov:dskpp",
+	xmlns:xenc="http://www.w3.org/2001/04/xmlenc#",
+	xmlns:ds="http://www.w3.org/2000/09/xmldsig#",
+	Version="1.0",
+	Status="Continue",
+	SessionID=sessionId
+)
+	dskpp:KeyType urn:ietf:params:xml:ns:keyprov:pskc:hotp
+	dskpp:EncryptionAlgorithm http://www.w3.org/2001/04/xmlenc#aes128-cbc
+	dskpp:MacAlgorithm urn:ietf:params:xml:ns:keyprov:dskpp:prf-sha256
+	dskpp:EncryptionKey
+		ds:KeyName Example-Key1
+	dskpp:KeyPackageFormat urn:ietf:params:xml:ns:keyprov:dskpp:pskc-key-container
+	dskpp:Payload
+		dskpp:Nonce #{serverNonce}

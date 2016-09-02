@@ -1,0 +1,15 @@
+{
+  "pubnub":{
+	"publish_key": "your PubNub publish key",
+	"subscribe_key": "your PubNub subscribe key"
+  },
+  "env": {
+    "database": {
+    	"name":"your database name",
+    	"url":"http://username:password@localhost:5984"
+    }
+  },
+  "security": {
+    "SSLPrivateKeyFilePath": "path/to/your/ssl/private.key"
+  }
+}
