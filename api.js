@@ -691,13 +691,13 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 										callbackPayload.signature = data.toString("base64");
 										fs.readFile(__dirname+"/test_data/signature.pdf",function(err, data) {
 											if (!err) {
-												callbackPayload.signature_page = data.toString("base64");
+												callbackPayload.signature_pdf = data.toString("base64");
 												fs.readFile(__dirname+"/test_data/public_key.pem",function(err, data) {
 													if (!err) {
 														callbackPayload.public_key = data.toString("utf8");														
 													} else {
 														delete callbackPayload.signature;
-														delete callbackPayload.signature_page;
+														delete callbackPayload.signature_pdf;
 													}
 													postAuthCallback(callbackUrl, callbackPayload);	
 												});
