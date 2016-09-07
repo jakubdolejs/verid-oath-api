@@ -17,7 +17,7 @@ nconf.add("api", { "type":"file", "file": __dirname+'/config.json' });
 nconf.load();
 // Other required modules
 const url = require('url');
-const bodyParser = require('body-parser');
+const bodyParser = require('body-parser-rawbody');
 const cookieParser = require('cookie-parser');
 const qr = require('qr-image');
 const ocra = require("./ocra.js");
@@ -41,6 +41,21 @@ router.use(cookieParser());
 router.use(bodyParser.raw({"type":"application/dskpp+xml"}));
 router.use(bodyParser.json({"limit":twentyMb,"type":"application/json"}));
 router.use(bodyParser.urlencoded({"extended":true,"limit":twentyMb}));
+router.use(function(req, res, next) {
+	req.signatureBase = isStrictMode() ? "https://" : "http://";
+	req.signatureBase += req.hostname;
+	if (!isStrictMode()){
+		var port = nconf.get("env:port");
+		if (port){
+			req.signatureBase += ":" + port;
+		}
+	}	
+	req.signatureBase += req.originalUrl;
+	if (req.method.toUpperCase() == 'POST') {
+		req.signatureBase += req.rawBody;
+	}
+	next();
+});
 
 var requestStartNotificationQueue = [];
 
@@ -93,22 +108,12 @@ function appAuthentication(req, res, next) {
 		res.status(401);
 		sendJSONResponse(res, {"error":{"description":"Missing API key or signature header"}});
 		return;
-	}			
-	var signatureBase = isStrictMode() ? "https://" : "http://";
-	signatureBase += req.hostname;
-	if (!isStrictMode()){
-		var port = nconf.get("env:port");
-		if (port){
-			signatureBase += ":" + port;
-		}
-	}	
-	signatureBase += req.originalUrl;	
-	
-	if (['POST','PUT'].indexOf(req.method.toUpperCase()) > -1 && req.body) {
-		signatureBase += JSON.stringify(req.body);
 	}
-	
-	verifySignature(apiKey, signatureBase, signature, function(verified) {
+	if (!req.signatureBase) {
+		res.sendStatus(400);
+		return;
+	}	
+	verifySignature(apiKey, req.signatureBase, signature, function(verified) {
 		if (verified) {
 			req.appId = apiKey;
 			next();
@@ -131,21 +136,7 @@ function postAuthCallback(callbackUrl, callbackPayload) {
 			if (callbackUrl && body.app_id) {
 				oath_db.get(body.app_id, function(err, app) {
 					if (!err && app.secret) {
-						var params = [];
-						for (var i in callbackPayload) {
-							params.push({"key":i,"val":String(callbackPayload[i])});
-						}
-						params.sort(function(a,b) {
-							if (a.key == b.key) {
-								return a.val < b.val ? -1 : 1;
-							}
-							return a.key < b.key ? -1 : 1;
-						});
-						var payload = {};
-						for (var i in params) {
-							payload[params[i].key] = params[i].val;
-						}
-						var signatureBase = callbackUrl+JSON.stringify(payload);
+						var signatureBase = callbackUrl+JSON.stringify(callbackPayload);
 						console.log("Signature base:"+signatureBase.substr(0,512));
 						var signature = cryptoModule.hmacSha256(new Buffer(app.secret), signatureBase);
 						var callbackRequest = {
@@ -377,7 +368,7 @@ router.get("/qr_code/(*).png", function(req, res) {
 								var callbackRequest = {
 									"url": bodyClient.reg_callback_url,
 									"method": "POST",
-									"form": data,
+									"json": data,
 									"headers": {
 										"x-verid-signature": signature
 									}
@@ -540,6 +531,9 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 				return;
 			}			
 		}
+		// Check whether it's a debug request. Debug requests will be automatically approved after 5 seconds.
+		// This feature may be removed in production.
+		const isDebug = req.body["debug"] === true;
 		// Options for the signature page, if any. The value must be an array with one or more distinct elements of string "face" or "id_card".
 		// Including "face" in the array will add an image of the user's face to the signature page. If "id_card" is included the app will request
 		// the user to take a photo of their picture ID, which will be added on the signature page.
@@ -591,7 +585,10 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 					// If no challenge is specified generate a random one.
 					question = cryptoModule.random(8).toString("hex");
 				}
-				const expiryInterval = 120000;
+				var expiryInterval = 120000;
+				if (req.body["expiry_ms"]) {
+					expiryInterval = parseInt(req.body["expiry_ms"]);
+				}
 				// Initial auth request object.
 				var authRequest = {
 					"type": "auth_request",
@@ -669,9 +666,9 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 					// Send a push notification to the user's devices.
 					publishPushNotification(message);
 					// Reply with the same content sent to the push notification.
-					res.send(message);
+					sendJSONResponse(res, message);
 					
-					if (isLocalDebug()){
+					if (isLocalDebug() || isDebug){
 						//schedule an automated auth accept after a few seconds
 						setTimeout(function() {							
 							console.log('firing callback');							
@@ -748,7 +745,7 @@ router.get("/auth_requests", function(req, res) {
 				});
 				if (clientIds.length == 0) {
 					// No pending requests for the device. Send an empty array.
-					res.send("[]");
+					sendJSONResponse(res, []);
 					return;
 				}
 				// Get the app IDs associated with the clients who own the signing keys.
@@ -839,7 +836,7 @@ router.get("/auth_requests", function(req, res) {
 						});
 					} else {
 						// No associated apps found. Return an empty array.
-						res.send("[]");
+						sendJSONResponse(res, []);
 					}
 				});
 			});

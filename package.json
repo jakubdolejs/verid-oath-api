@@ -11,6 +11,7 @@
   "private": true,
   "dependencies": {
     "body-parser": "^1.15.2",
+    "body-parser-rawbody": "^1.13.2",
     "chai": "^3.5.0",
     "cookie-parser": "^1.4.3",
     "crypto": "0.0.3",
