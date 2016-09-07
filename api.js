@@ -147,7 +147,12 @@ function postAuthCallback(callbackUrl, callbackPayload) {
 							},
 							"json": callbackPayload
 						};
+						console.log("Send authentication callback", callbackUrl);
 						request(callbackRequest);
+					} else if (!err) {
+						console.log("Failed to send authentication callback: missing app secret");
+					} else {
+						console.log("Failed to send authentication callback", err);
 					}
 				});
 			}
@@ -459,7 +464,7 @@ router.post("/auth_request/(*)", function(req, res){
 		if (signature && signaturePage && publicKey) {
 			// Add the PDF signature page parameters to the callback payload if present.
 			callbackPayload.signature = signature;
-			callbackPayload.signature_page = signaturePage;
+			callbackPayload.signature_pdf = signaturePage;
 			callbackPayload.public_key = publicKey;
 		}
 		// Get the keys registered for the device specified by the device ID.
