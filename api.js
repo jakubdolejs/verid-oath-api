@@ -136,7 +136,7 @@ function postAuthCallback(callbackUrl, callbackPayload) {
 			if (callbackUrl && body.app_id) {
 				oath_db.get(body.app_id, function(err, app) {
 					if (!err && app.secret) {
-						var signatureBase = callbackUrl+JSON.stringify(callbackPayload);
+						var signatureBase = url.format(callbackUrl)+JSON.stringify(callbackPayload);
 						console.log("Signature base:"+signatureBase.substr(0,512));
 						var signature = cryptoModule.hmacSha256(new Buffer(app.secret), signatureBase);
 						var callbackRequest = {
