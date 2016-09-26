@@ -4,6 +4,13 @@ module.exports = {
 	Generate OCRA (OATH Challenge/Response Algorithms) OTP (One-Time Password)
 	*/
 	"ocra": function(ocraSuite, key, question, counter, password, sessionInfo, timestamp) {
+		if (question == null) {
+			return null;
+		}
+		var hexQuestion = new Buffer(question, "utf8").toString("hex");
+		return ocraHexQuestion(ocraSuite, key, hexQuestion, counter, password, sessionInfo, timestamp);
+	},
+	"ocraHexQuestion": function(ocraSuite, key, question, counter, password, sessionInfo, timestamp) {
 		const splitSuite = ocraSuite.split(":");
 		if (splitSuite.length < 3) {
 			return null;
@@ -42,7 +49,6 @@ module.exports = {
 			if (question == null) {
 				return null;
 			}
-			question = new Buffer(question, "utf8").toString("hex");
 			var a=[],i=0;for(;i<questionLength*2;)a[i++]=0;
 			var questionChars = question.split("");
 			var i = 0;

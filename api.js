@@ -22,6 +22,9 @@ const cookieParser = require('cookie-parser');
 const qr = require('qr-image');
 const ocra = require("./ocra.js");
 const cryptoModule = require("./crypto_module.js");
+const admin = require("./admin.js");
+const digits_login = require("./digits_login.js");
+
 const PubNub = require('pubnub');
 const pn = new PubNub({
 	"ssl":true,
@@ -30,9 +33,9 @@ const pn = new PubNub({
 });
 const request = require('request');
 const fs = require('fs');
-router.apiVersion = "v1";
+router.version = "v1";
 
-const oath_db = require("./database.js");
+const db = require("./database.js");
 
 app.set('view engine', 'pug');
 // Increase limit to 20MB to parse JSON objects with PDF signature pages.
@@ -42,6 +45,7 @@ router.use(bodyParser.raw({"type":"application/dskpp+xml"}));
 router.use(bodyParser.json({"limit":twentyMb,"type":"application/json"}));
 router.use(bodyParser.urlencoded({"extended":true,"limit":twentyMb}));
 router.use(function(req, res, next) {
+	console.log("Host",req.get("host"));
 	req.signatureBase = isStrictMode() ? "https://" : "http://";
 	req.signatureBase += req.hostname;
 	if (!isStrictMode()){
@@ -71,9 +75,9 @@ appId and compare it to the signature.
 Send a boolean parameter in the callback to indicate whether the generated and received
 signatures match.
 */
-function verifySignature(appId, signatureBase, signature, callback) {	
-	oath_db.get(appId, function(err, body) {		
-		if (err || body.type != 'app' || !body.secret) {
+function verifySignature(appId, signatureBase, signature, callback) {
+	db.apps.get(appId, function(err, body) {		
+		if (err || !body.secret) {
 			callback(false);
 			return;
 		}
@@ -131,10 +135,10 @@ function postAuthCallback(callbackUrl, callbackPayload) {
 	if (!callbackPayload.client_id || !callbackUrl) {
 		return;
 	}
-	oath_db.get(callbackPayload.client_id, function(err, body) {
+	db.clients.get(callbackPayload.client_id, function(err, body) {
 		if (!err) {
 			if (callbackUrl && body.app_id) {
-				oath_db.get(body.app_id, function(err, app) {
+				db.apps.get(body.app_id, function(err, app) {
 					if (!err && app.secret) {
 						var signatureBase = url.format(callbackUrl)+JSON.stringify(callbackPayload);
 						console.log("Signature base:"+signatureBase.substr(0,512));
@@ -180,37 +184,34 @@ function publishPushNotification(request) {
 
 // Delete all expired authentication requests.
 function deleteExpiredAuthRequests(callback) {
-	oath_db.view('auth_requests','by_expiry',{'endkey':Date.now()}, function(err,body) {
-		var expiredRequests = [];
-		if (!err && body.rows && body.rows.length > 0) {
-			body.rows.forEach(function(doc){
+	db.requests.destroy({"expired":true}, function(err, deleted) {
+		if (err) {
+			callback(err);
+		} else if (deleted && deleted.length > 0) {
+			for (var doc in deleted) {
 				var idx = requestStartNotificationQueue.indexOf(doc.id);
 				if (idx > -1) {
 					requestStartNotificationQueue.splice(idx, 1);
 				}
-				expiredRequests.push({"_id":doc.id,"_rev":doc.value.rev,"_deleted":true});
-				if (doc.value.callback_url) {
+				if (doc.callback_url) {
 					// Notify the callback URL.
-					postAuthCallback(doc.value.callback_url, {
+					postAuthCallback(doc.callback_url, {
 						"approved": false,
-						"challenge": doc.value.question,
-						"client_id": doc.value.client_id,
+						"challenge": doc.question,
+						"client_id": doc.client_id,
 						"request_id": doc.id,
 						"timestamp": Date.now(),
 						"type": "authentication",
 						"verified": false
 					});
 				}
-			});
-		}
-		if (expiredRequests.length > 0) {
-			// Bulk delete the requests from the database.
-			oath_db.bulk({"docs":expiredRequests}, callback);
-		} else if (callback) {
+			}
+		} else {
 			callback();
 		}
 	});
 }
+
 // If strict mode is off (false) calls may be issued over http instead of https.
 function isStrictMode() {
 	var strictMode = nconf.get("env:strictMode");
@@ -233,9 +234,9 @@ Register a new client.
 */
 router.post("/clients", appAuthentication, function(req, res) {
 	// Get the authenticated app
-	oath_db.get(req.appId, function(err, body) {
+	db.apps.get(req.appId, function(err, body) {
 		// If the app is not found return status 404 (not found)
-		if (err || body.type != 'app') {
+		if (err) {
 			res.sendStatus(404);
 			return;
 		}
@@ -255,7 +256,7 @@ router.post("/clients", appAuthentication, function(req, res) {
 			client.reg_callback_url = url.format(callbackUrl);
 		}
 		// Insert the client to the database
-		oath_db.insert(client, function(err, body) {
+		db.clients.insert(client, function(err, body) {
 			if (err) {
 				res.sendStatus(500);
 				return;
@@ -264,6 +265,66 @@ router.post("/clients", appAuthentication, function(req, res) {
 			sendJSONResponse(res, {"id":body.id});
 		});		
 	});
+});
+
+/*
+Delete a client and his/her keys.
+*/
+router.delete("/clients", appAuthentication, function(req, res) {
+	if (!req.query.client_id) {
+		res.sendStatus(400);
+		return;
+	}
+	db.clients.destroy({"id":clientId}, function(err) {
+		if (!err) {			
+			res.sendStatus(200);
+			// TODO: Should the client's device(s) be notified?
+		} else {
+			res.sendStatus(500);
+		}
+	});
+});
+
+/*
+Delete device's symmetric key.
+*/
+router.delete("/device", function(req, res) {
+	// Get device_id, ocra_suite, otp, client_id and question
+	if (!req.query.device_id || !req.query.ocra_suite || !req.query.otp || !req.query.client_id || !req.query.question) {
+		res.sendStatus(400);
+		return;
+	}
+	var deviceId = req.query.device_id;
+	var ocraSuite = req.query.ocra_suite;
+	var otp = req.query.otp;
+	var clientId = req.query.clientId;
+	// Verify the otp
+	db.keys.list({"device_id":deviceId}, function(err, body) {
+		if (err || body.length == 0) {
+			// No keys found.
+			res.sendStatus(404);					
+		}
+		var jsonResponse = {"verified":false};
+		for (var i=0; i<body.length; i++) {
+			var doc = body[i];
+			if (doc.value.client_id == clientId) {
+				// If the client ID of the key is the same as the client ID of the authentication request generate OCRA OTP.
+				var calculatedOtp = ocra.ocra(ocraSuite, doc.value.key, question, null, null, null, null);
+				if (calculatedOtp == otp) {
+					db.keys.destroy({"id":body._id,"rev":body._rev}, function(err) {
+						if (!err) {
+							// TODO: Dispatch a delete callback to the app?
+							res.sendStatus(200);
+						} else {
+							res.sendStatus(500);
+						}
+					});
+					return;
+				}
+			}
+		}
+		res.sendStatus(401); // Likely invalid OTP
+	});	
 });
 
 /*
@@ -285,9 +346,9 @@ router.get("/qr_code/(*).png", function(req, res) {
 		return;
 	}
 	// Get the client from the database.
-	oath_db.get(clientId, function(err, bodyClient) {
+	db.clients.get(clientId, function(err, bodyClient) {
 		// Ensure the document is a client and that that it has an app_id.
-		if (err || bodyClient.type != 'client' || !bodyClient.app_id) {
+		if (err || !bodyClient.app_id) {
 			// Return 404 if the client is not found.
 			res.sendStatus(404);
 			return;
@@ -299,8 +360,8 @@ router.get("/qr_code/(*).png", function(req, res) {
 				return;
 			}
 			// Get the app associated with the client.
-			oath_db.get(bodyClient.app_id, function(err, bodyApp) {
-				if (err || bodyApp.type != 'app') {
+			db.apps.get(bodyClient.app_id, function(err, bodyApp) {
+				if (err) {
 					// If the app is not found return 404.
 					res.sendStatus(404);
 					return;
@@ -396,7 +457,7 @@ router.get("/qr_code/(*).png", function(req, res) {
 			// The password is later deleted by the DSKPP module at the end of the key provisioning sequence.
 			password = cryptoModule.random(8).toString("hex");
 			bodyClient.password = password;
-			oath_db.insert(bodyClient, getApp);
+			db.clients.update(bodyClient, getApp);
 		} else {
 			getApp();
 		}
@@ -411,7 +472,10 @@ by the one-time password (OTP) instead of the app signature.
 router.post("/auth_request/(*)", function(req, res){
 	var requestId = req.params['0'];
 	var otp = req.body.otp;
-	var deviceSerialNo = req.body.device_serial_no;
+	var deviceSerialNo = req.body.device_id;
+	if (!deviceSerialNo) {
+		deviceSerialNo = req.body.device_serial_no;
+	}
 	// The user may decide to approve or to reject the request.
 	var approve = req.body.approve ? true : false;
 	if (!otp || !deviceSerialNo) {
@@ -428,7 +492,7 @@ router.post("/auth_request/(*)", function(req, res){
 	var publicKey = req.body.public_key;
 	
 	// Get the request from the database.
-	oath_db.get(requestId, function(err, body) {
+	db.requests.get(requestId, function(err, body) {
 		if (err) {
 			// The request is not in the database. Return 404 not found.
 			res.sendStatus(404);
@@ -454,7 +518,7 @@ router.post("/auth_request/(*)", function(req, res){
 		
 		if (!expires || expires < Date.now()) {
 			// The request expired. Remove it from the database.
-			oath_db.destroy(requestId, requestRev, function(err) {
+			db.requests.destroy({"id":requestId, "rev":requestRev}, function(err) {
 				postAuthCallback(callbackUrl, callbackPayload);
                 console.log("Request "+requestId+" expired");
 				sendJSONResponse(res, {"verified":false, "description":"Request expired"});
@@ -468,15 +532,15 @@ router.post("/auth_request/(*)", function(req, res){
 			callbackPayload.public_key = publicKey;
 		}
 		// Get the keys registered for the device specified by the device ID.
-		oath_db.view("keys","by_device",{"keys":[deviceSerialNo]}, function(err, body) {
-			if (err || body.rows.length == 0) {
+		db.keys.list({"device_id":deviceSerialNo}, function(err, body) {
+			if (err || body.length == 0) {
 				// No keys found. This should not happen. Return 500 server error.
 				res.sendStatus(500);					
 			}
 			var jsonResponse = {"verified":false};
 			var calculatedOcras = [];
-			for (var i=0; i<body.rows.length; i++) {
-				var doc = body.rows[i];
+			for (var i=0; i<body.length; i++) {
+				var doc = body[i];
 				if (doc.value.client_id == clientId) {
 					// If the client ID of the key is the same as the client ID of the authentication request generate OCRA OTP.
 					var calculatedOtp = ocra.ocra(ocraSuite, doc.value.key, question, null, null, null, null);
@@ -510,11 +574,12 @@ router.post("/auth_request/(*)", function(req, res){
 				requestStartNotificationQueue.splice(idx, 1);
 			}
 			// Delete the request.
-			oath_db.destroy(requestId, requestRev);
-			// Post the callback payload to the callback URL.
-			postAuthCallback(callbackUrl, callbackPayload);
-			// Return a response to the authenticator app.
-			sendJSONResponse(res, jsonResponse);
+			db.requests.destroy({"id": requestId, "rev":requestRev}, function() {
+				// Post the callback payload to the callback URL.
+				postAuthCallback(callbackUrl, callbackPayload);
+				// Return a response to the authenticator app.
+				sendJSONResponse(res, jsonResponse);
+			});
 		});			
 	});
 });
@@ -544,8 +609,8 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 		// the user to take a photo of their picture ID, which will be added on the signature page.
 		const signaturePageOptions = req.body["signature_page"];
 		// Get the client object from the database.
-		oath_db.get(clientId, function(err, body) {
-			if (err || body.type != 'client') {
+		db.clients.get(clientId, function(err, body) {
+			if (err) {
 				res.status(400);
 				sendJSONResponse(res, {"error":{"description":"Client not found."}});
 				return;
@@ -556,8 +621,8 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 				return;
 			}
 			// Get the app associated with the client.
-			oath_db.get(body.app_id, function(err, app) {
-				if (err || app.type != 'app') {
+			db.apps.get(body.app_id, function(err, app) {
+				if (err) {
 					res.status(500);
 					sendJSONResponse(res, {"error":{"description":"Client app not found."}});
 					return;
@@ -611,7 +676,7 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 					authRequest.callback_url = url.format(callbackUrl);
 				}
 				// Insert the auth request object in the database.
-				oath_db.insert(authRequest, function(err, body) {
+				db.requests.insert(authRequest, function(err, body) {
 					if (err) {
 						res.status(500);
 						sendJSONResponse(res, err);
@@ -622,7 +687,7 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 					// Automatically delete the request when it expires
 					setTimeout(function() {
 						// Get the request from the database.
-						oath_db.get(requestId, function(err, authReq) {
+						db.requests.get(requestId, function(err, authReq) {
 							if (!err) {
 								// The request still exists. Delete it. If the request does not
 								// exist it means it's been approved or rejected by the user.
@@ -630,7 +695,7 @@ router.post("/auth_requests", appAuthentication, function(req, res){
 								if (idx > -1) {
 									requestStartNotificationQueue.splice(idx, 1);
 								}
-								oath_db.destroy(authReq._id, authReq._rev, function(err) {
+								db.requests.destroy({"id":authReq._id, "rev": authReq._rev}, function(err) {
 									if (!err && authRequest.callback_url) {
 										// The request is deleted when the user approves or rejects it.
 										// The fact that we go this far means the user didn't approve
@@ -738,14 +803,14 @@ router.get("/auth_requests", function(req, res) {
 			// Get requests by device ID.
 			var deviceId = req.query.device_id;
 			// Get the signing keys associated with the device.
-			oath_db.view("keys","by_device",{"keys":[deviceId]}, function(err, body) {
+			db.keys.list({"device_id":deviceId}, function(err, body) {
 				var clientIds = [];
 				if (err) {
 					res.status(500);
 					sendJSONResponse(res, err);
 					return;
 				}
-				body.rows.forEach(function(doc) {
+				body.forEach(function(doc) {
 					clientIds.push(doc.value.client_id);
 				});
 				if (clientIds.length == 0) {
@@ -754,7 +819,7 @@ router.get("/auth_requests", function(req, res) {
 					return;
 				}
 				// Get the app IDs associated with the clients who own the signing keys.
-				oath_db.view("apps","client_apps",{"keys":clientIds}, function(err, body) {
+				db.apps.list({"client_ids":clientIds}, function(err, body) {
 					if (err) {
 						res.status(500);
 						sendJSONResponse(res, err);
@@ -762,24 +827,24 @@ router.get("/auth_requests", function(req, res) {
 					}
 					var clientApps = {};
 					var appIds = [];
-					body.rows.forEach(function(doc) {
+					body.forEach(function(doc) {
 						clientApps[doc.id] = doc.value;
 						appIds.push(doc.value);
 					});
 					if (appIds.length > 0) {
 						// Get the apps by IDs retrieved in the previous database query.
-						oath_db.view("apps","by_id",{"keys":appIds}, function(err, body) {
+						db.apps.list({"ids":appIds}, function(err, body) {
 							if (err) {
 								res.status(500);
 								sendJSONResponse(res, err);
 								return;
 							}
 							var apps = {};
-							body.rows.forEach(function(doc) {
+							body.forEach(function(doc) {
 								apps[doc.id] = doc.value;
 							});
 							// Get the user's pending authentication requests.
-							oath_db.view("auth_requests","by_client",{"keys":clientIds}, function(err, body) {
+							db.requests.list({"client_ids":clientIds}, function(err, body) {
 								if (err) {
 									res.status(500);
 									sendJSONResponse(res, err);
@@ -788,7 +853,7 @@ router.get("/auth_requests", function(req, res) {
 								var requests = [];
 								var callbacks = [];
 								var now = Date.now();
-								body.rows.forEach(function(doc) {
+								body.forEach(function(doc) {
 									if (doc.value.expires && doc.value.expires > now) {
 										// Form the authentication request object.
 										var authRequest = {
@@ -852,4 +917,8 @@ router.get("/auth_requests", function(req, res) {
 	});	
 });
 
-module.exports = router;
+module.exports = {
+	"api": router,
+	"admin": admin,
+	"user": digits_login
+};
