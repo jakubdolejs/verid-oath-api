@@ -11,6 +11,8 @@ credentials for the particular calls.
 const express = require('express');
 const router = express.Router();
 const app = express();
+router.use(express.static(__dirname+"/static"));
+
 // Load local configuration
 const nconf = require('nconf');
 nconf.add("api", { "type":"file", "file": __dirname+'/config.json' });
@@ -23,7 +25,6 @@ const qr = require('qr-image');
 const ocra = require("./ocra.js");
 const cryptoModule = require("./crypto_module.js");
 const admin = require("./admin.js");
-const digits_login = require("./digits_login.js");
 
 const PubNub = require('pubnub');
 const pn = new PubNub({
@@ -37,7 +38,6 @@ router.version = "v1";
 
 const db = require("./database.js");
 
-app.set('view engine', 'pug');
 // Increase limit to 20MB to parse JSON objects with PDF signature pages.
 var twentyMb = 20*1024*1024;
 router.use(cookieParser());
@@ -297,24 +297,66 @@ router.delete("/device", function(req, res) {
 	var deviceId = req.query.device_id;
 	var ocraSuite = req.query.ocra_suite;
 	var otp = req.query.otp;
-	var clientId = req.query.clientId;
+	var clientId = req.query.client_id;
+	var question = req.query.question;
 	// Verify the otp
 	db.keys.list({"device_id":deviceId}, function(err, body) {
 		if (err || body.length == 0) {
-			// No keys found.
-			res.sendStatus(404);					
+			res.sendStatus(404);
+			return;
 		}
-		var jsonResponse = {"verified":false};
 		for (var i=0; i<body.length; i++) {
 			var doc = body[i];
 			if (doc.value.client_id == clientId) {
 				// If the client ID of the key is the same as the client ID of the authentication request generate OCRA OTP.
 				var calculatedOtp = ocra.ocra(ocraSuite, doc.value.key, question, null, null, null, null);
 				if (calculatedOtp == otp) {
-					db.keys.destroy({"id":body._id,"rev":body._rev}, function(err) {
+					// Delete the key from the database
+					db.keys.destroy({"id":doc.id,"rev":doc.value.rev}, function(err) {
 						if (!err) {
-							// TODO: Dispatch a delete callback to the app?
 							res.sendStatus(200);
+							// Get the client record that corresponds to the device
+							db.clients.get(clientId, function(err, client) {
+								if (err || !client.app_id || !client.reg_callback_url) {
+									return;
+								}
+								// Get the number of remaining keys for the client.
+								// Passing it on to the API consumer helps it to decide whether to delete the client if there are no more keys remaining.
+								db.keys.list({"client_id":clientId}, function(err, keys) {
+									if (err) {
+										return;
+									}
+									// Get the app associated with the client
+									db.apps.get(client.app_id, function(err, app) {
+										if (!err && app.secret) {
+											// Dispatch a delete callback to the app
+											var data = {
+												"client_id": clientId,
+												"type": "key_deletion",
+												"device_id": deviceId,
+												"keys_remaining": keys.length
+											};
+											var signatureBase = client.reg_callback_url+JSON.stringify(data);
+											var key = new Buffer(app.secret);
+											// Sign the callback URL and the JSON payload with the app secret.
+											// The consumer app should verify the signature to ensure the callback notification is genuine.
+											var signature = cryptoModule.hmacSha256(key, signatureBase).toString('hex');
+											// Generate the callback request.
+											var callbackRequest = {
+												"url": client.reg_callback_url,
+												"method": "POST",
+												"json": data,
+												"headers": {
+													"x-verid-signature": signature
+												}
+											};
+											// Send the callback request.
+											console.log("Send key deletion callback for client "+clientId+" to "+client.reg_callback_url);
+											request(callbackRequest);
+										}
+									});									
+								});
+							});
 						} else {
 							res.sendStatus(500);
 						}
@@ -472,10 +514,7 @@ by the one-time password (OTP) instead of the app signature.
 router.post("/auth_request/(*)", function(req, res){
 	var requestId = req.params['0'];
 	var otp = req.body.otp;
-	var deviceSerialNo = req.body.device_id;
-	if (!deviceSerialNo) {
-		deviceSerialNo = req.body.device_serial_no;
-	}
+	var deviceSerialNo = req.body.device_id || req.body.device_serial_no;
 	// The user may decide to approve or to reject the request.
 	var approve = req.body.approve ? true : false;
 	if (!otp || !deviceSerialNo) {
@@ -533,11 +572,11 @@ router.post("/auth_request/(*)", function(req, res){
 		}
 		// Get the keys registered for the device specified by the device ID.
 		db.keys.list({"device_id":deviceSerialNo}, function(err, body) {
-			if (err || body.length == 0) {
-				// No keys found. This should not happen. Return 500 server error.
-				res.sendStatus(500);					
+			if (err) {
+				res.sendStatus(500);
+				return;
 			}
-			var jsonResponse = {"verified":false};
+			var jsonResponse = {"verified": false};
 			var calculatedOcras = [];
 			for (var i=0; i<body.length; i++) {
 				var doc = body[i];
@@ -563,10 +602,14 @@ router.post("/auth_request/(*)", function(req, res){
 						console.log("OTP: "+calculatedOcras[i].otp+", key: "+calculatedOcras[i].key);
 					}
 					console.log("----");
+					jsonResponse.description = "Invalid OTP";
+					res.status(401);
 				} else {
 					console.log("----\nDid not find any keys");
 					console.log("Client id: "+clientId);
 					console.log("Device id: "+deviceSerialNo+"\n----");
+					jsonResponse.description = "Key not found";
+					res.status(404);
 				}
 			}
 			var idx = requestStartNotificationQueue.indexOf(requestId);
@@ -919,6 +962,5 @@ router.get("/auth_requests", function(req, res) {
 
 module.exports = {
 	"api": router,
-	"admin": admin,
-	"user": digits_login
+	"admin": admin
 };

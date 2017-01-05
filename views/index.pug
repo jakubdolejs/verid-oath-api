@@ -1,0 +1,27 @@
+doctype html
+html(lang="en")
+	head
+		title Ver-ID
+		script#digits-sdk(src='https://cdn.digits.com/1/sdk.js')
+		script(src='https://code.jquery.com/jquery-2.2.3.min.js', integrity='sha256-a23g1Nt4dtEYOj7bR+vTu7+T8VP13humZFBJNIYoEJo=', crossorigin='anonymous')
+		script(src='/js/login.js')
+		link(rel='stylesheet',type='text/css',href='/css/style.css')
+	body
+		#content
+			h1 Welcome to Ver-ID
+			#intro
+				p Ver-ID SDK adds face authentication to your website.
+				p Please log in with your phone number to get started.
+			#digits
+			#registration(style='display:none')
+				h2 Please register
+				div
+					input#name(type='text',placeholder='name')
+				div
+					input#surname(type='text',placeholder='surname')
+				div
+					input#email(type='email',placeholder='email')
+				div
+					input#company(type='text',placeholder='company')
+				div
+					button#register Submit

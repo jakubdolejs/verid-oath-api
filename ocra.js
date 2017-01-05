@@ -8,7 +8,7 @@ module.exports = {
 			return null;
 		}
 		var hexQuestion = new Buffer(question, "utf8").toString("hex");
-		return ocraHexQuestion(ocraSuite, key, hexQuestion, counter, password, sessionInfo, timestamp);
+		return this.ocraHexQuestion(ocraSuite, key, hexQuestion, counter, password, sessionInfo, timestamp);
 	},
 	"ocraHexQuestion": function(ocraSuite, key, question, counter, password, sessionInfo, timestamp) {
 		const splitSuite = ocraSuite.split(":");

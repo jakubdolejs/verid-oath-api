@@ -10,7 +10,7 @@ function validateAndInsert(type, obj, requiredParams, callback) {
 		callback("Object is null.");
 		return;
 	}
-	if (Array.isArray(requiredParams) && params.length > 0) {
+	if (Array.isArray(requiredParams) && requiredParams.length > 0) {
 		var missing = [];
 		for (var i=0; i<requiredParams.length; i++) {
 			if (!obj[requiredParams[i]]) {
@@ -227,7 +227,7 @@ module.exports = {
 		"get": getItemOfType("key"),
 		"list": function(params, callback) {
 			if (params.device_id) {
-				db.view("keys","by_device",{"keys":[params.deviceId]}, viewCallback(callback));
+				db.view("keys","by_device",{"keys":[params.device_id]}, viewCallback(callback));
 			} else if (params.client_id) {
 				db.view("keys","by_client",{"keys":[params.client_id]}, viewCallback(callback));
 			} else {

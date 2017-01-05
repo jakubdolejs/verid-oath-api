@@ -1,0 +1,38 @@
+doctype html
+html(lang="en")
+	head
+		title= app.name
+		script(src='https://code.jquery.com/jquery-2.2.3.min.js', integrity='sha256-a23g1Nt4dtEYOj7bR+vTu7+T8VP13humZFBJNIYoEJo=', crossorigin='anonymous')
+		script(src='/js/app.js')
+		link(rel='stylesheet',type='text/css',href='/css/style.css')
+		script.
+			
+	body
+		#content
+			h1 Edit #{app.name}
+			form(action='',method='post')
+				p
+					div
+						label(for='name') App name
+					div
+						input(type='text',name='name',placeholder='My great website',value=app.name)
+				p
+					div
+						label(for='url') App domain*
+					div
+						input(type='text',name='url',placeholder='auth.example.com',value=app.url)
+				p
+					div App secret
+					div
+						code#secret= app.secret
+					div
+						a#resetSecret(href='javascript:void(0);') Generate new secret
+						
+				p
+					input#cancel(type='reset',value='Cancel')
+					|&nbsp;
+					input(type='submit',value='Save')
+				p
+					|*Authentication and registration callbacks will only be issued to URLs on this domain
+				p
+					a#deleteApp(href='javascript:void(0);') Delete app

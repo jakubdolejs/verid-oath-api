@@ -1,0 +1,30 @@
+doctype html
+html(lang="en")
+	head
+		title My Ver-ID Apps
+		link(rel='stylesheet',type='text/css',href='/css/style.css')
+	body
+		#content
+			h1 Register App
+			div.register
+				form(action='',method='post')
+					p
+						div
+							label(for='name') App name
+						div
+							input(type='text',name='name',placeholder='My great website')
+					p
+						div
+							label(for='url') App domain*
+						div
+							input(type='text',name='url',placeholder='auth.example.com')
+					p
+						button.create Register my app
+					p
+						|*Authentication and registration callbacks will only be issued to URLs on this domain
+			if apps.length > 0
+				h1 My Registered Apps
+				ul
+					each val in apps
+						li
+							a(href=baseUrl+'/'+val.id)= val.name
